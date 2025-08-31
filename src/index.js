@@ -4,7 +4,7 @@ class ChatClient {
     constructor() {
         this.ws = null;
         this.currentUser = null;
-        this.users = new Set();
+        this.users = [];
         this.init();
     }
 
@@ -39,7 +39,7 @@ class ChatClient {
         });
     }
 
-    handleNicknameSubmit() {
+    async handleNicknameSubmit() {
         const nickname = document.getElementById('nicknameInput').value.trim();
         const errorElement = document.getElementById('errorMessage');
 
@@ -49,27 +49,47 @@ class ChatClient {
             return;
         }
 
-        this.connectToWebSocket(nickname);
+        try {
+            const response = await fetch('https://websocket-chat-server.onrender.com/new-user', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ name: nickname })
+            });
+
+            const data = await response.json();
+
+            if (data.status === 'ok') {
+                this.currentUser = data.user;
+                this.hideNicknameModal();
+                this.connectToWebSocket();
+            } else {
+                this.showError(data.message);
+            }
+        } catch (error) {
+            console.error('Registration error:', error);
+            this.showError('Ошибка регистрации');
+        }
     }
 
-    connectToWebSocket(nickname) {
-        // Используем Render URL для WebSocket сервера
+    connectToWebSocket() {
         const wsUrl = 'wss://websocket-chat-server.onrender.com';
         this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {
-            console.log('WebSocket connection established');
-            this.ws.send(JSON.stringify({
-                type: 'reg',
-                name: nickname
-            }));
+            this.renderChatInterface();
         };
 
         this.ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                console.log('Received message:', data);
-                this.handleMessage(data);
+
+                if (Array.isArray(data)) {
+                    this.updateUsersList(data);
+                } else if (data.type === 'send') {
+                    this.addMessage(data);
+                }
             } catch (error) {
                 console.error('Error parsing message:', error);
             }
@@ -82,40 +102,16 @@ class ChatClient {
 
         this.ws.onclose = () => {
             console.log('WebSocket connection closed');
-            this.showError('Соединение с сервером закрыто');
         };
-    }
 
-    handleMessage(data) {
-        switch (data.type) {
-            case 'reg':
-                this.handleRegistrationResponse(data);
-                break;
-            case 'users':
-                this.updateUsersList(data.users);
-                break;
-            case 'message':
-                this.addMessage(data);
-                break;
-            case 'user_joined':
-                this.handleUserJoined(data.user);
-                break;
-            case 'user_left':
-                this.handleUserLeft(data.userId);
-                break;
-            default:
-                console.log('Unknown message type:', data.type);
-        }
-    }
-
-    handleRegistrationResponse(data) {
-        if (data.success) {
-            this.currentUser = data.user;
-            this.hideNicknameModal();
-            this.renderChatInterface();
-        } else {
-            this.showError('Этот псевдоним уже занят. Выберите другой.');
-        }
+        window.addEventListener('beforeunload', () => {
+            if (this.ws && this.currentUser) {
+                this.ws.send(JSON.stringify({
+                    type: 'exit',
+                    user: { name: this.currentUser.name }
+                }));
+            }
+        });
     }
 
     hideNicknameModal() {
@@ -165,17 +161,20 @@ class ChatClient {
         const input = document.getElementById('messageInput');
         const message = input.value.trim();
 
-        if (message && this.ws) {
-            this.ws.send(JSON.stringify({
+        if (message && this.ws && this.currentUser) {
+            const messageData = {
                 type: 'send',
-                message: message
-            }));
+                message: message,
+                user: this.currentUser
+            };
+
+            this.ws.send(JSON.stringify(messageData));
             input.value = '';
         }
     }
 
     updateUsersList(users) {
-        this.users = new Set(users.map(user => user.id));
+        this.users = users;
         const userList = document.getElementById('userList');
         userList.innerHTML = '';
 
@@ -188,24 +187,11 @@ class ChatClient {
         });
     }
 
-    handleUserJoined(user) {
-        this.users.add(user.id);
-        this.updateUsersList([...this.users].map(id => ({ id, name: user.name })));
-    }
-
-    handleUserLeft(userId) {
-        this.users.delete(userId);
-        const userElement = document.querySelector(`.user-item[data-user-id="${userId}"]`);
-        if (userElement) {
-            userElement.remove();
-        }
-    }
-
     addMessage(data) {
         const messagesContainer = document.getElementById('messagesContainer');
         const messageElement = document.createElement('div');
 
-        const isOwnMessage = data.user.id === this.currentUser.id;
+        const isOwnMessage = this.currentUser && data.user.id === this.currentUser.id;
         messageElement.className = `message ${isOwnMessage ? 'own' : 'other'}`;
 
         const time = new Date().toLocaleTimeString();
