@@ -53,10 +53,12 @@ class ChatClient {
     }
 
     connectToWebSocket(nickname) {
+        // Используем Render URL для WebSocket сервера
         const wsUrl = 'wss://websocket-chat-server.onrender.com';
         this.ws = new WebSocket(wsUrl);
 
         this.ws.onopen = () => {
+            console.log('WebSocket connection established');
             this.ws.send(JSON.stringify({
                 type: 'reg',
                 name: nickname
@@ -64,8 +66,13 @@ class ChatClient {
         };
 
         this.ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            this.handleMessage(data);
+            try {
+                const data = JSON.parse(event.data);
+                console.log('Received message:', data);
+                this.handleMessage(data);
+            } catch (error) {
+                console.error('Error parsing message:', error);
+            }
         };
 
         this.ws.onerror = (error) => {
@@ -75,6 +82,7 @@ class ChatClient {
 
         this.ws.onclose = () => {
             console.log('WebSocket connection closed');
+            this.showError('Соединение с сервером закрыто');
         };
     }
 
